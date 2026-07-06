@@ -14,8 +14,6 @@ services:
       # ----------------------------------------
       - EPIC_EMAIL=你的邮箱@example.com
       - EPIC_PASSWORD=你的密码
-      # 可选：官方周免接口没有返回的额外 Epic 商品链接，例如 Android 周免
-      - EXTRA_PROMOTION_URLS=
       - GEMINI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxx # 使用 GLM 时可删除这一行
 
       # ----------------------------------------

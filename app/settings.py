@@ -66,13 +66,6 @@ class EpicSettings(AgentConfig):
 
     EPIC_EMAIL: str = Field(default_factory=lambda: _env("EPIC_EMAIL"))
     EPIC_PASSWORD: SecretStr = Field(default_factory=lambda: _env("EPIC_PASSWORD"))
-    EXTRA_PROMOTION_URLS: str = Field(
-        default="",
-        description=(
-            "Optional comma/newline separated Epic product URLs to claim in addition to "
-            "the official freeGamesPromotions feed."
-        ),
-    )
     DISABLE_BEZIER_TRAJECTORY: bool = Field(default=False)
     WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS: int = Field(default=3000)
 
@@ -121,7 +114,6 @@ class EpicSettings(AgentConfig):
             "GLM_MODEL",
             "BROWSER_BACKEND",
             "EPIC_EMAIL",
-            "EXTRA_PROMOTION_URLS",
             "CHALLENGE_CLASSIFIER_MODEL",
             "IMAGE_CLASSIFIER_MODEL",
             "SPATIAL_POINT_REASONER_MODEL",

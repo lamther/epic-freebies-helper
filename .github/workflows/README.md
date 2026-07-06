@@ -39,9 +39,6 @@
 | --- | --- |
 | `EPIC_EMAIL` | Epic 邮箱，需关闭 2FA |
 | `EPIC_PASSWORD` | Epic 密码，需关闭 2FA |
-| `EXTRA_PROMOTION_URLS` | 可选，补充官方周免接口未返回的 Epic 商品链接，多个链接用英文逗号或换行分隔 |
-
-`EXTRA_PROMOTION_URLS` 适合 Android 周免或其他特殊限免链接。工作流会先领取官方接口自动发现的周免，再领取这里配置的额外链接。
 
 如果你使用 Gemini 官方接口：
 

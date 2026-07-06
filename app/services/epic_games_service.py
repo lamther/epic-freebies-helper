@@ -5,6 +5,7 @@
 # Description: 游戏商城控制句柄
 
 import asyncio
+import hashlib
 import json
 import time
 from contextlib import suppress
@@ -42,6 +43,52 @@ PURCHASE_IFRAME_SELECTOR = (
 )
 CHECKOUT_BUTTON_TEXTS = ("PLACE ORDER", "ADD TO LIBRARY")
 PurchaseContainer = FrameLocator | Frame | Page
+
+
+def _normalize_extra_promotion_url(url: str) -> str:
+    normalized = (url or "").strip()
+    if not normalized:
+        return ""
+    normalized = normalized.replace("/zh-CN/", "/en-US/")
+    if normalized.startswith("store.epicgames.com/"):
+        normalized = f"https://{normalized}"
+    return normalized
+
+
+def _configured_extra_promotion_urls() -> list[str]:
+    raw = settings.EXTRA_PROMOTION_URLS or ""
+    urls: list[str] = []
+    seen: set[str] = set()
+
+    for part in raw.replace("\r", "\n").replace(",", "\n").replace(";", "\n").splitlines():
+        url = _normalize_extra_promotion_url(part)
+        if not url:
+            continue
+        if not url.startswith(("https://store.epicgames.com/", "http://store.epicgames.com/")):
+            logger.warning(f"Ignoring non-Epic extra promotion URL: {url}")
+            continue
+        dedupe_key = url.rstrip("/").lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        urls.append(url)
+
+    return urls
+
+
+def _promotion_from_extra_url(url: str) -> PromotionGame:
+    slug = url.rstrip("/").split("?")[0].split("#")[0].rsplit("/", 1)[-1]
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    title = slug.replace("-", " ").strip().title() or "Extra Epic Promotion"
+
+    return PromotionGame(
+        title=title,
+        id=digest[:32],
+        namespace=digest[32:64],
+        description="Extra Epic promotion configured by EXTRA_PROMOTION_URLS.",
+        offerType="EXTRA_URL",
+        url=url,
+    )
 
 
 def get_promotions() -> List[PromotionGame]:
@@ -106,6 +153,15 @@ def get_promotions() -> List[PromotionGame]:
 
         logger.info(e["url"])
         promotions.append(PromotionGame(**e))
+
+    seen_urls = {p.url.rstrip("/").lower() for p in promotions}
+    for url in _configured_extra_promotion_urls():
+        dedupe_key = url.rstrip("/").lower()
+        if dedupe_key in seen_urls:
+            continue
+        logger.info(f"Extra promotion URL configured: {url}")
+        promotions.append(_promotion_from_extra_url(url))
+        seen_urls.add(dedupe_key)
 
     return promotions
 

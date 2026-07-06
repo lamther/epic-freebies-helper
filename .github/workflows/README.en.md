@@ -39,6 +39,9 @@ Required in all cases:
 | --- | --- |
 | `EPIC_EMAIL` | Epic account email, with 2FA disabled |
 | `EPIC_PASSWORD` | Epic account password, with 2FA disabled |
+| `EXTRA_PROMOTION_URLS` | Optional Epic product URLs not returned by the official weekly-free feed, separated by commas or newlines |
+
+`EXTRA_PROMOTION_URLS` is useful for Android weekly freebies or other special free offers. The workflow claims the automatically discovered PC freebies first, then claims the extra configured URLs.
 
 If you use the official Gemini API:
 

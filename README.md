@@ -88,6 +88,7 @@ Fork 之后先打开自己仓库的 `Actions` 页面，进入 `Epic Awesome Game
 | --- | --- |
 | `EPIC_EMAIL` | your_epic_email@example.com |
 | `EPIC_PASSWORD` | your_epic_password |
+| `EXTRA_PROMOTION_URLS` | 可选，额外 Epic 商品链接，多个链接用英文逗号或换行分隔 |
 
 如果你使用 `GLM`，建议先按下面这组填写：
 
@@ -128,6 +129,7 @@ Fork 之后先打开自己仓库的 `Actions` 页面，进入 `Epic Awesome Game
 说明：
 
 - 当前代码同时支持 `Gemini 官方接口` 和 `AiHubMix` 这类 Gemini 兼容接口。
+- `EXTRA_PROMOTION_URLS` 用于补充官方周免接口没有返回的商品，例如 Android 周免；这些链接会和自动发现到的 PC 周免一起领取。
 - 变量名是 `GEMINI_BASE_URL`，不是 `GEMINI_BASE_MODEL`。
 - `LLM_PROVIDER=glm` 时，请填写 `GLM_API_KEY`，无需新建并填写 `GEMINI_API_KEY`。
 - `LLM_PROVIDER=gemini` 时，请填写 `GEMINI_API_KEY`，无需新建并填写 `GLM_API_KEY`。

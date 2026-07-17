@@ -14,6 +14,7 @@ from contextlib import suppress
 os.environ.setdefault("MPLBACKEND", "Agg")
 
 from hcaptcha_challenger.agent import AgentV
+from hcaptcha_challenger.models import ChallengeSignal
 from loguru import logger
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import expect, Page, Response
@@ -503,9 +504,16 @@ class EpicAuthorization:
             for challenge_attempt in range(1, 4):
                 logger.debug("Solving login challenge attempt {}/3", challenge_attempt)
                 with suppress(Exception):
-                    await asyncio.wait_for(
+                    challenge_signal = await asyncio.wait_for(
                         agent.wait_for_challenge(), timeout=settings.CHALLENGE_TIMEOUT_SECONDS
                     )
+                    if challenge_signal != ChallengeSignal.SUCCESS:
+                        logger.warning(
+                            "Login challenge attempt {}/3 returned {}; refreshing challenge",
+                            challenge_attempt,
+                            challenge_signal.value,
+                        )
+                        await agent.robotic_arm.refresh_challenge()
 
                 try:
                     await self._await_login_outcome(point_url, timeout_seconds=25)

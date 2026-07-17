@@ -961,6 +961,14 @@ class _GLMAsyncModels:
         if has_image and "paths" in schema_fields:
             system_messages.append(GLM_DRAG_SEQUENCE_INSTRUCTION)
 
+        if response_schema and hasattr(response_schema, "model_json_schema"):
+            schema_payload = response_schema.model_json_schema()
+            system_messages.append(
+                "Return only one JSON object matching this schema exactly. Do not replace nested "
+                "coordinate objects with scalar source or target values:\n"
+                + json.dumps(schema_payload, ensure_ascii=True, separators=(",", ":"))
+            )
+
         if system_messages:
             messages.insert(0, {"role": "system", "content": "\n\n".join(system_messages)})
 

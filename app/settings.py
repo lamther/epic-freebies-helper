@@ -67,6 +67,7 @@ class EpicSettings(AgentConfig):
     EPIC_EMAIL: str = Field(default_factory=lambda: _env("EPIC_EMAIL"))
     EPIC_PASSWORD: SecretStr = Field(default_factory=lambda: _env("EPIC_PASSWORD"))
     DISABLE_BEZIER_TRAJECTORY: bool = Field(default=False)
+    RETRY_ON_FAILURE: bool = Field(default=False)
     WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS: int = Field(default=3000)
 
     CHALLENGE_CLASSIFIER_MODEL: str = Field(default="")
@@ -79,7 +80,7 @@ class EpicSettings(AgentConfig):
     captcha_response_dir: Path = HCAPTCHA_DIR.joinpath(".captcha")
 
     ENABLE_APSCHEDULER: bool = Field(default=True)
-    TASK_TIMEOUT_SECONDS: int = Field(default=900, ge=60)
+    TASK_TIMEOUT_SECONDS: int = Field(default=1500, ge=60)
     CHALLENGE_TIMEOUT_SECONDS: int = Field(default=180, ge=30)
     CART_CHECKOUT_ATTEMPTS: int = Field(default=3, ge=1)
     REDIS_URL: str = Field(default="redis://redis:6379/0")

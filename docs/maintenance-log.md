@@ -790,3 +790,25 @@
   - 拖拽 schema 新增线段编号补全规则，明确目标是相邻编号之间的空缺中心，并要求同时匹配两端与方向。
   - GLM thinking 支持范围扩展到 `glm-4.6*`，保留原有 `glm-4.5*` 行为。
   - 按仓库约束未执行测试；使用 Ruff、Black、语法检查与真实 GitHub Actions 继续验证。
+
+### 2026-07-17 验证码失败重试缺少 schema 约束与题目刷新边界
+
+- 现象：
+  - 运行 `29549619619` 已越过原死锁点并处理到第二款游戏，但 `Luto` 的结算验证码仍未确认成功。
+  - GLM 4.6V thinking 有一轮返回 `source` / `target` 标量，缺少二维坐标和 `paths` 嵌套结构，触发 Pydantic 校验失败并消耗完整执行超时。
+  - `hcaptcha-challenger` 的默认 `RETRY_ON_FAILURE=true` 会在一次调用内部递归重试失败挑战，应用无法及时刷新题目或推进状态机。
+- 根因判断：
+  - GLM Chat Completions 兼容请求仅声明 `json_object`，没有把 Pydantic JSON Schema 明确传入提示。
+  - 验证码失败后的重试边界由依赖内部控制，和应用的登录三次尝试、结算十分钟窗口重复叠加。
+- 改动文件：
+  - `app/extensions/llm_adapter.py`
+  - `app/services/epic_authorization_service.py`
+  - `app/services/epic_games_service.py`
+  - `app/settings.py`
+  - `.github/workflows/epic-gamer.yml`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 每次结构化 GLM 请求都会附带完整 JSON Schema，并明确禁止把嵌套坐标简化为标量。
+  - 关闭依赖内部失败递归；登录和结算层在失败信号后主动刷新挑战，由现有有界循环决定是否重试。
+  - 应用任务上限调整为 1500 秒，仍低于 Actions 的 30 分钟上限并预留约 5 分钟上传 artifacts。
+  - 按仓库约束未执行测试；使用静态检查和真实 GitHub Actions 继续验证。

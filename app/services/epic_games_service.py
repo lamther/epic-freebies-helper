@@ -13,6 +13,7 @@ from typing import List
 
 import httpx
 from hcaptcha_challenger.agent import AgentV
+from hcaptcha_challenger.models import ChallengeSignal
 from loguru import logger
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Frame, Page
@@ -1187,9 +1188,16 @@ class EpicGames:
             await page.wait_for_timeout(2500)
 
             try:
-                await asyncio.wait_for(
+                challenge_signal = await asyncio.wait_for(
                     agent.wait_for_challenge(), timeout=settings.CHALLENGE_TIMEOUT_SECONDS
                 )
+                if challenge_signal != ChallengeSignal.SUCCESS:
+                    logger.warning(
+                        "Checkout security check attempt {} returned {}; refreshing challenge",
+                        attempt,
+                        challenge_signal.value,
+                    )
+                    await agent.robotic_arm.refresh_challenge()
             except Exception as err:
                 logger.warning(
                     f"Checkout security check solve attempt failed (attempt {attempt}): {err}"
@@ -1783,9 +1791,11 @@ class EpicGames:
                 wpc, _payment_btn = await self._active_purchase_container(self.page)
                 logger.debug("Click payment button")
                 await self._uk_confirm_order(wpc)
-                await asyncio.wait_for(
+                challenge_signal = await asyncio.wait_for(
                     agent.wait_for_challenge(), timeout=settings.CHALLENGE_TIMEOUT_SECONDS
                 )
+                if challenge_signal != ChallengeSignal.SUCCESS:
+                    raise RuntimeError(f"Cart checkout challenge returned {challenge_signal.value}")
                 return
             except Exception as err:
                 last_error = err

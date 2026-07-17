@@ -854,3 +854,25 @@
   - 终点同步加上完全相同的偏移，因此保持模型原始平移向量，不改变它判断的最终摆放位置。
   - 路径任务改用紧凑 JSON 模板，避免完整 schema 回显；诊断 artifact 同时保留去敏后的锚点标注图。
   - 按仓库约束未执行测试；使用四张真实 Action 题图做离线锚点检测、静态检查和下一轮真实 Action 验证。
+
+### 2026-07-17 结算验证码探测抢占正式求解并耗尽任务预算
+
+- 现象：
+  - 运行 `29552675319` 已由 OpenCV 锚点修正成功通过登录验证码，并完成 Epic 登录与 Store session 验证。
+  - `Luto` 与 `Echo Generation: Midnight Edition` 均进入 `Add to library` 结算，但结算探测会先启动一次 25 秒验证码求解；正式求解随后再次启动，期间出现被取消的模型请求、GLM `400 code=1210` 和挑战执行超时。
+  - 第一款未确认后进行了四轮重复 reconciliation，第二款仍在结算验证码阶段时触发 1500 秒任务总超时；两款都没有形成可验证的入库证据。
+- 根因判断：
+  - `_probe_checkout_challenge()` 与 extended probe 名义上负责发现 hCaptcha，实际却直接调用完整的 `agent.wait_for_challenge()`；25 秒探测边界短于 GLM 一次正常空间推理，取消后又由正式求解入口重启，形成竞态并浪费模型和任务预算。
+  - hCaptcha 题目文字可能混入 Cyrillic `Ѕ`、Greek/Cyrillic `Ο/О` 等同形字符，精确英文短语匹配会偶发漏掉编号线段专用规则与拖拽锚点修正。
+  - 两款连续结算及多轮验证码的最坏耗时已经超过 1500 秒，而单款四轮即时 reconciliation 与最终统一 reconciliation 重复。
+- 改动文件：
+  - `app/extensions/hcaptcha_adapter.py`
+  - `app/services/epic_games_service.py`
+  - `.github/workflows/epic-gamer.yml`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 普通和 extended checkout probe 改为只轮询可见安全校验 DOM；`_resolve_checkout_security_check()` 成为唯一调用模型求解的入口。
+  - 题目先做 Unicode 与已见同形字归一化，再用 `drag`、`segment`、`right`、`complete`、`line` 五个关键词识别编号线段题。
+  - 单款即时 reconciliation 从四轮降为两轮，保留所有 promotion 完成后的统一最终 reconciliation。
+  - Action 上限调整为 45 分钟，应用任务上限调整为 2400 秒，仍为状态汇总和 artifact 上传预留约 5 分钟。
+  - 按仓库约束未执行测试；使用 Black、Ruff、Python 语法检查、YAML 解析和下一轮真实 GitHub Actions 验证。

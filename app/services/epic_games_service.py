@@ -1234,53 +1234,54 @@ class EpicGames:
         await self._capture_purchase_debug(page, "checkout_security_check_unresolved", url)
         return False
 
-    async def _probe_checkout_challenge(self, page: Page, agent: AgentV, url: str) -> bool:
+    async def _probe_checkout_challenge(
+        self, page: Page, url: str, timeout_seconds: int = 25
+    ) -> bool:
         logger.debug(f"Probing checkout for latent challenge. {url=}")
-        if await self._is_checkout_security_check_visible(page):
-            logger.debug(f"Checkout challenge probe found visible challenge before waiting. {url=}")
-            return True
+        started_at = time.monotonic()
 
-        try:
-            await asyncio.wait_for(agent.wait_for_challenge(), timeout=25)
-        except Exception as err:
+        while time.monotonic() - started_at < timeout_seconds:
             if await self._is_checkout_security_check_visible(page):
-                logger.warning(
-                    f"Checkout challenge probe detected challenge artifacts after wait failure: {err} | {url=}"
+                logger.debug(
+                    "Checkout challenge probe found a visible challenge after {:.1f}s. {}",
+                    time.monotonic() - started_at,
+                    url,
                 )
+                await self._capture_purchase_debug(page, "checkout_challenge_probe", url)
                 return True
-            logger.info(f"No solvable latent checkout challenge detected: {err}")
-            return False
+            await page.wait_for_timeout(1000)
 
-        await page.wait_for_timeout(1500)
-        await self._capture_purchase_debug(page, "checkout_challenge_probe", url)
-        return True
+        logger.info(
+            "No visible latent checkout challenge detected after {}s. {}", timeout_seconds, url
+        )
+        return False
 
     async def _extended_checkout_challenge_probe(
-        self, page: Page, agent: AgentV, url: str, timeout_seconds: int = 90
+        self, page: Page, url: str, timeout_seconds: int = 90
     ) -> bool:
         logger.warning(
             "Checkout remained on Place Order after repeated attempts - running extended challenge probe. {}",
             url,
         )
 
-        try:
-            await asyncio.wait_for(agent.wait_for_challenge(), timeout=timeout_seconds)
-        except Exception as err:
+        started_at = time.monotonic()
+        while time.monotonic() - started_at < timeout_seconds:
             if await self._is_checkout_security_check_visible(page):
                 logger.warning(
-                    f"Extended checkout challenge probe left a visible challenge behind: {err} | {url=}"
+                    "Extended checkout challenge probe found a visible challenge after {:.1f}s. {}",
+                    time.monotonic() - started_at,
+                    url,
                 )
                 await self._capture_purchase_debug(page, "checkout_challenge_extended_visible", url)
                 return True
+            await page.wait_for_timeout(1000)
 
-            logger.info(
-                f"Extended checkout challenge probe ended without a solvable challenge: {err}"
-            )
-            return False
-
-        await page.wait_for_timeout(1500)
-        await self._capture_purchase_debug(page, "checkout_challenge_extended_probe", url)
-        return True
+        logger.info(
+            "Extended checkout challenge probe ended without a visible challenge after {}s. {}",
+            timeout_seconds,
+            url,
+        )
+        return False
 
     async def _is_promotion_in_order_history(self, promotion: PromotionGame) -> bool:
         try:
@@ -1383,7 +1384,7 @@ class EpicGames:
         return False
 
     async def _finalize_unconfirmed_checkout(self, page: Page, promotion: PromotionGame) -> bool:
-        return await self._confirm_promotion_claimed(page, promotion, attempts=4)
+        return await self._confirm_promotion_claimed(page, promotion, attempts=2)
 
     @staticmethod
     async def _payment_button_state(payment_btn) -> str:
@@ -1579,7 +1580,7 @@ class EpicGames:
 
                 logger.debug("No explicit checkout security check detected after Place Order")
                 with suppress(Exception):
-                    await self._probe_checkout_challenge(page, agent, url)
+                    await self._probe_checkout_challenge(page, url)
 
                 outcome = await self._observe_checkout_outcome(page, url, timeout_ms=20000)
                 logger.debug(f"Checkout outcome after Place Order: {outcome} | {url=}")
@@ -1589,9 +1590,7 @@ class EpicGames:
                     )
                     return True
                 if outcome == "checkout" and attempt >= 2:
-                    challenge_detected = await self._extended_checkout_challenge_probe(
-                        page, agent, url
-                    )
+                    challenge_detected = await self._extended_checkout_challenge_probe(page, url)
                     if challenge_detected and await self._is_checkout_security_check_visible(page):
                         if not await self._resolve_checkout_security_check(page, agent, url):
                             return False

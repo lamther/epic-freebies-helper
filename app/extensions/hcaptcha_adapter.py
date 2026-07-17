@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import unicodedata
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,8 @@ import numpy as np
 from hcaptcha_challenger.agent.challenger import AgentV, RoboticArm
 from loguru import logger
 
-NUMBERED_LINE_MARKER = "drag the segment on the right to complete the line"
+NUMBERED_LINE_KEYWORDS = ("drag", "segment", "right", "complete", "line")
+_PROMPT_HOMOGLYPHS = str.maketrans({"Ѕ": "S", "ѕ": "s", "Ο": "O", "ο": "o", "О": "O", "о": "o"})
 
 NUMBERED_LINE_SKILL = """
 The visible instruction is: "Please drag the segment on the right to complete the line."
@@ -48,7 +50,13 @@ _original_perform_drag_drop = RoboticArm._perform_drag_drop
 def _normalize_prompt(value: Any) -> str:
     if not isinstance(value, str):
         return ""
-    return " ".join(value.split()).strip()
+    normalized = unicodedata.normalize("NFKC", value).translate(_PROMPT_HOMOGLYPHS)
+    return " ".join(normalized.split()).strip()
+
+
+def _is_numbered_line_prompt(value: Any) -> bool:
+    prompt = _normalize_prompt(value).casefold()
+    return all(keyword in prompt for keyword in NUMBERED_LINE_KEYWORDS)
 
 
 def _current_prompt(robotic_arm: RoboticArm) -> str:
@@ -137,7 +145,7 @@ def _detect_numbered_source_anchor(
 
 def _match_user_prompt_with_epic_skills(robotic_arm: RoboticArm, job_type: Any) -> str:
     prompt = _current_prompt(robotic_arm)
-    if NUMBERED_LINE_MARKER in prompt.lower():
+    if _is_numbered_line_prompt(prompt):
         logger.info("Using numbered-line hCaptcha skill | prompt={!r}", prompt)
         return NUMBERED_LINE_SKILL
     return _original_match_user_prompt(robotic_arm, job_type)
@@ -160,7 +168,7 @@ async def _capture_spatial_mapping_with_source_anchor(
     )
     robotic_arm._epic_numbered_source_anchor = None
 
-    if NUMBERED_LINE_MARKER not in _current_prompt(robotic_arm).lower():
+    if not _is_numbered_line_prompt(_current_prompt(robotic_arm)):
         return raw, projection
 
     with suppress(Exception):

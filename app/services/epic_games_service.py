@@ -339,7 +339,7 @@ class EpicGames:
     @staticmethod
     async def _locator_visible_text(locator, timeout: int | None = None) -> str:
         with suppress(Exception):
-            options = {} if timeout is None else {"timeout": timeout}
+            options = {"timeout": 1000 if timeout is None else timeout}
             return " ".join(((await locator.inner_text(**options)) or "").upper().split())
         return ""
 
@@ -349,15 +349,18 @@ class EpicGames:
 
     @staticmethod
     async def _frame_texts(page: Page, timeout: int | None = None) -> list[str]:
-        texts: list[str] = []
-        options = {} if timeout is None else {"timeout": timeout}
-        for frame in page.frames:
+        frame_timeout = 500 if timeout is None else timeout
+
+        async def read_frame(frame: Frame) -> str:
             with suppress(Exception):
                 body = frame.locator("body")
-                text = await body.inner_text(**options)
+                text = await body.inner_text(timeout=frame_timeout)
                 if text:
-                    texts.append(" ".join(text.upper().split()))
-        return texts
+                    return " ".join(text.upper().split())
+            return ""
+
+        texts = await asyncio.gather(*(read_frame(frame) for frame in page.frames))
+        return [text for text in texts if text]
 
     @staticmethod
     async def _combined_text(
@@ -376,14 +379,14 @@ class EpicGames:
         purchase_btn = page.locator("//button[@data-testid='purchase-cta-button']").first
         with suppress(Exception):
             if await purchase_btn.is_visible(timeout=500):
-                return ((await purchase_btn.text_content()) or "").strip().upper()
+                return ((await purchase_btn.text_content(timeout=1000)) or "").strip().upper()
         return ""
 
     @staticmethod
     async def _purchase_frame_text(page: Page) -> str:
         with suppress(Exception):
             purchase_frame_body = page.frame_locator(PURCHASE_IFRAME_SELECTOR).first.locator("body")
-            frame_text = await purchase_frame_body.inner_text()
+            frame_text = await purchase_frame_body.inner_text(timeout=1000)
             if frame_text:
                 return " ".join(frame_text.upper().split())
         return ""
@@ -664,9 +667,13 @@ class EpicGames:
         target = RUNTIME_DIR.joinpath("purchase_debug")
         target.mkdir(parents=True, exist_ok=True)
         safe_reason = reason.lower().replace(" ", "_")
-        await page.screenshot(path=target.joinpath(f"{safe_reason}-{stamp}.png"), full_page=True)
         with suppress(Exception):
-            page_text = await page.locator("body").text_content()
+            await asyncio.wait_for(
+                page.screenshot(path=target.joinpath(f"{safe_reason}-{stamp}.png"), full_page=True),
+                timeout=10,
+            )
+        with suppress(Exception):
+            page_text = await page.locator("body").text_content(timeout=2000)
             frame_texts = await EpicGames._frame_texts(page)
             target.joinpath(f"{safe_reason}-{stamp}.txt").write_text(
                 (
@@ -994,8 +1001,7 @@ class EpicGames:
                 try:
                     await expect(confirm_btn).to_be_visible(timeout=confirm_timeout)
                     logger.debug(
-                        "✅ Found payment confirm button in checkout container url='{}'",
-                        frame_url,
+                        "✅ Found payment confirm button in checkout container url='{}'", frame_url
                     )
                     return container, confirm_btn
                 except AssertionError:
@@ -1181,7 +1187,9 @@ class EpicGames:
             await page.wait_for_timeout(2500)
 
             try:
-                await agent.wait_for_challenge()
+                await asyncio.wait_for(
+                    agent.wait_for_challenge(), timeout=settings.CHALLENGE_TIMEOUT_SECONDS
+                )
             except Exception as err:
                 logger.warning(
                     f"Checkout security check solve attempt failed (attempt {attempt}): {err}"
@@ -1411,10 +1419,7 @@ class EpicGames:
             before_state = await self._payment_button_state(active_btn)
             before_overlay = await self._visible_talon_overlay_id(self.page)
             logger.debug(
-                "Submitting place order via {} click. {} | before={}",
-                name,
-                url,
-                before_state,
+                "Submitting place order via {} click. {} | before={}", name, url, before_state
             )
 
             try:
@@ -1453,10 +1458,7 @@ class EpicGames:
                 return True
 
             logger.debug(
-                "Place Order {} click had no visible effect yet: {} | {}",
-                name,
-                url,
-                after_state,
+                "Place Order {} click had no visible effect yet: {} | {}", name, url, after_state
             )
             await self.page.wait_for_timeout(750)
 
@@ -1765,24 +1767,44 @@ class EpicGames:
             return False
 
     async def _purchase_free_game(self):
-        await self.page.goto(URL_CART, wait_until="domcontentloaded")
-        logger.debug("Move ALL paid games from the shopping cart out")
-        await self._empty_cart(self.page)
+        last_error: Exception | None = None
 
-        agent = AgentV(page=self.page, agent_config=settings)
-        await self.page.click("//button//span[text()='Check Out']")
-        await self._agree_license(self.page)
+        for attempt in range(1, settings.CART_CHECKOUT_ATTEMPTS + 1):
+            try:
+                await self.page.goto(URL_CART, wait_until="domcontentloaded", timeout=45000)
+                logger.debug("Move ALL paid games from the shopping cart out")
+                await self._empty_cart(self.page)
 
-        try:
-            logger.debug("Move to webPurchaseContainer iframe")
-            wpc, payment_btn = await self._active_purchase_container(self.page)
-            logger.debug("Click payment button")
-            await self._uk_confirm_order(wpc)
-            await agent.wait_for_challenge()
-        except Exception as err:
-            logger.warning(f"Failed to solve captcha - {err}")
-            await self.page.reload()
-            return await self._purchase_free_game()
+                agent = AgentV(page=self.page, agent_config=settings)
+                await self.page.click("//button//span[text()='Check Out']", timeout=10000)
+                await self._agree_license(self.page)
+
+                logger.debug("Move to webPurchaseContainer iframe")
+                wpc, _payment_btn = await self._active_purchase_container(self.page)
+                logger.debug("Click payment button")
+                await self._uk_confirm_order(wpc)
+                await asyncio.wait_for(
+                    agent.wait_for_challenge(), timeout=settings.CHALLENGE_TIMEOUT_SECONDS
+                )
+                return
+            except Exception as err:
+                last_error = err
+                logger.warning(
+                    "Cart checkout attempt {}/{} failed - err={!r}",
+                    attempt,
+                    settings.CART_CHECKOUT_ATTEMPTS,
+                    err,
+                )
+                await self._capture_purchase_debug(
+                    self.page, f"cart_checkout_attempt_{attempt}_failed", URL_CART
+                )
+                if attempt < settings.CART_CHECKOUT_ATTEMPTS:
+                    with suppress(Exception):
+                        await self.page.reload(wait_until="domcontentloaded", timeout=30000)
+
+        raise RuntimeError(
+            f"Cart checkout failed after {settings.CART_CHECKOUT_ATTEMPTS} attempts"
+        ) from last_error
 
     @retry(retry=retry_if_exception_type(TimeoutError), stop=stop_after_attempt(2), reraise=True)
     async def collect_weekly_games(self, promotions: List[PromotionGame]):
@@ -1794,7 +1816,7 @@ class EpicGames:
         if has_cart_items:
             await self._purchase_free_game()
             try:
-                await self.page.wait_for_url(URL_CART_SUCCESS)
+                await self.page.wait_for_url(URL_CART_SUCCESS, timeout=30000)
                 logger.success("🎉 Successfully collected cart games")
                 cart_claimed = True
             except TimeoutError:

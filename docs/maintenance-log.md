@@ -751,3 +751,25 @@
   - 即时结账末尾增加 promotion 级 reconciliation：可回到商品页重新确认，并额外轮询订单历史，降低“实际已领到但最后没收好”的误报率。
   - `collect_weekly_games()` 会在真正抛错前，再对所有未确认 promotion 统一执行一轮最终 reconciliation，尽量把第二单的延迟成功补收回来。
   - 本地验证限制：未执行测试；已执行 `python3 -m py_compile app/services/epic_games_service.py` 与 `git diff --check` 做静态校验。
+
+### 2026-07-17 GitHub Actions 在设备兼容弹窗后无限等待
+
+- 现象：
+  - 定时运行 `29512945904` 已完成 Epic 登录，并发现 `Luto` 与 `Echo Generation: Midnight Edition`。
+  - 第一款游戏点击 `Get` 后出现设备不支持弹窗；日志显示弹窗已成功关闭，但此后约 27 分钟没有新日志，最终触发 Actions 的 30 分钟上限。
+- 根因判断：
+  - 弹窗关闭后，领取进度检查会读取主页面和所有 iframe 文本；旧实现对每个 frame 串行调用无显式超时的 `inner_text()`。
+  - 登录 hCaptcha 遗留或失效的 frame 会让这次状态扫描长时间阻塞；同时验证码等待、购物车递归重试和任务入口缺少有效的总超时保护。
+- 改动文件：
+  - `app/deploy.py`
+  - `app/settings.py`
+  - `app/services/epic_authorization_service.py`
+  - `app/services/epic_games_service.py`
+  - `.github/workflows/epic-gamer.yml`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - iframe 文本改为并发、短超时读取，商品状态探针不再按 frame 数量累加长等待。
+  - 登录与结算验证码等待、购物车结算重试均增加明确上限，移除无界递归。
+  - `TASK_TIMEOUT_SECONDS=900` 现在实际包裹完整浏览器任务；超时会记录安全的阶段状态并保留截图，给 artifact 上传预留时间。
+  - Actions summary 会展示不含账号或 Secret 的 `run-status.json`，便于未下载完整日志时确认停止阶段。
+  - 按仓库约束未执行测试；使用静态检查、格式检查和真实 GitHub Actions 运行验证。

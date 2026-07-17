@@ -25,7 +25,7 @@ from pytz import timezone
 from services.epic_authorization_service import EpicAuthorization
 from services.browser_context import open_browser_context
 from services.epic_games_service import EpicAgent
-from settings import LOG_DIR
+from settings import LOG_DIR, RUNTIME_DIR, SCREENSHOTS_DIR
 from settings import settings
 from utils import init_log
 
@@ -38,6 +38,15 @@ init_log(
 
 # Default timezone for scheduling operations
 TIMEZONE = timezone("Asia/Shanghai")
+RUN_STATUS_PATH = RUNTIME_DIR.joinpath("run-status.json")
+
+
+def _write_run_status(status: str, stage: str, error_type: str | None = None) -> None:
+    payload = {"status": status, "stage": stage}
+    if error_type:
+        payload["error_type"] = error_type
+    RUN_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RUN_STATUS_PATH.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -58,36 +67,77 @@ async def execute_browser_tasks(headless: bool = True):
     Args:
         headless: Whether to run browser in headless mode
     """
+    try:
+        await asyncio.wait_for(
+            _execute_browser_tasks(headless=headless), timeout=settings.TASK_TIMEOUT_SECONDS
+        )
+    except TimeoutError as err:
+        logger.error(
+            "Epic Games collection exceeded task timeout ({}s)", settings.TASK_TIMEOUT_SECONDS
+        )
+        raise RuntimeError(
+            f"Epic Games collection exceeded task timeout ({settings.TASK_TIMEOUT_SECONDS}s)"
+        ) from err
+
+
+async def _execute_browser_tasks(headless: bool = True):
     logger.debug("Starting Epic Games collection task")
+    stage = "browser_initialization"
+    _write_run_status("running", stage)
 
     # Configure browser with anti-detection features and video recording
     async with open_browser_context(headless=headless) as browser:
-        # Initialize or reuse existing browser page
-        page = browser.pages[0] if browser.pages else await browser.new_page()
-        logger.debug("Browser initialized successfully")
+        try:
+            # Initialize or reuse existing browser page
+            page = browser.pages[0] if browser.pages else await browser.new_page()
+            logger.debug("Browser initialized successfully")
 
-        # Handle Epic Games authentication
-        logger.debug("Initiating Epic Games authentication")
-        agent = EpicAuthorization(page)
-        is_authenticated = await agent.invoke()
-        if not is_authenticated:
-            raise RuntimeError("Authentication failed, aborting this run")
-        logger.debug("Authentication completed")
+            # Handle Epic Games authentication
+            stage = "authentication"
+            _write_run_status("running", stage)
+            logger.debug("Initiating Epic Games authentication")
+            agent = EpicAuthorization(page)
+            is_authenticated = await agent.invoke()
+            if not is_authenticated:
+                raise RuntimeError("Authentication failed, aborting this run")
+            logger.debug("Authentication completed")
 
-        # Execute a free games collection on new page
-        logger.debug("Starting free games collection process")
-        game_page = await browser.new_page()
-        agent = EpicAgent(game_page)
-        await agent.collect_epic_games()
-        logger.debug("Free games collection completed")
+            # Execute a free games collection on new page
+            stage = "free_games_collection"
+            _write_run_status("running", stage)
+            logger.debug("Starting free games collection process")
+            game_page = await browser.new_page()
+            agent = EpicAgent(game_page)
+            await agent.collect_epic_games()
+            logger.debug("Free games collection completed")
 
-        # Cleanup browser resources
-        logger.debug("Cleaning up browser resources")
-        with suppress(Exception):
-            for p in browser.pages:
-                await p.close()
+            # Cleanup browser resources
+            stage = "browser_cleanup"
+            _write_run_status("running", stage)
+            logger.debug("Cleaning up browser resources")
+            with suppress(Exception):
+                for p in browser.pages:
+                    await p.close()
 
-        logger.debug("Browser tasks execution finished successfully")
+            _write_run_status("success", "completed")
+            logger.debug("Browser tasks execution finished successfully")
+        except asyncio.CancelledError:
+            _write_run_status("timeout", stage, "TimeoutError")
+            target = SCREENSHOTS_DIR.joinpath("timeout")
+            target.mkdir(parents=True, exist_ok=True)
+            for index, current_page in enumerate(browser.pages):
+                with suppress(Exception):
+                    await asyncio.wait_for(
+                        current_page.screenshot(
+                            path=target.joinpath(f"{stage}-{index}.png"), full_page=True
+                        ),
+                        timeout=10,
+                    )
+            logger.error("Collection task cancelled while in stage '{}'", stage)
+            raise
+        except Exception as err:
+            _write_run_status("failed", stage, type(err).__name__)
+            raise
 
 
 async def deploy():

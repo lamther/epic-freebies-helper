@@ -47,6 +47,14 @@ GLM_VISUAL_COORDINATE_INSTRUCTION = (
     "a bounding box or a drag path."
 )
 
+GLM_DRAG_SEQUENCE_INSTRUCTION = (
+    "Read the visible challenge instruction in the first image before choosing a drag target. "
+    "For 'drag the segment on the right to complete the line' puzzles, the isolated draggable "
+    "segment has a sequence number N. Move its center into the missing gap between the fixed "
+    "segments numbered N-1 and N+1 so both endpoints and the curve orientation connect. The "
+    "target is the center of the empty gap, not the center of an existing numbered segment."
+)
+
 
 def _ensure_list(value: Any) -> list[Any]:
     if value is None:
@@ -948,6 +956,11 @@ class _GLMAsyncModels:
         if has_image:
             system_messages.append(GLM_VISUAL_COORDINATE_INSTRUCTION)
 
+        response_schema = getattr(config, "response_schema", None)
+        schema_fields = getattr(response_schema, "model_fields", {})
+        if has_image and "paths" in schema_fields:
+            system_messages.append(GLM_DRAG_SEQUENCE_INSTRUCTION)
+
         if system_messages:
             messages.insert(0, {"role": "system", "content": "\n\n".join(system_messages)})
 
@@ -968,7 +981,10 @@ class _GLMAsyncModels:
         if getattr(config, "response_schema", None) is not None:
             payload["response_format"] = {"type": "json_object"}
 
-        if getattr(config, "thinking_config", None) is not None and model.startswith("glm-4.5"):
+        thinking_models = ("glm-4.5", "glm-4.6")
+        if getattr(config, "thinking_config", None) is not None and model.lower().startswith(
+            thinking_models
+        ):
             payload["thinking"] = {"type": "enabled"}
 
         payload.update({k: v for k, v in kwargs.items() if k not in {"config"}})

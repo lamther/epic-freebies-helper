@@ -773,3 +773,20 @@
   - `TASK_TIMEOUT_SECONDS=900` 现在实际包裹完整浏览器任务；超时会记录安全的阶段状态并保留截图，给 artifact 上传预留时间。
   - Actions summary 会展示不含账号或 Secret 的 `run-status.json`，便于未下载完整日志时确认停止阶段。
   - 按仓库约束未执行测试；使用静态检查、格式检查和真实 GitHub Actions 运行验证。
+
+### 2026-07-17 GLM 4.6V 在线段补全型结算验证码中持续选错落点
+
+- 现象：
+  - 修复设备弹窗后的 frame 死锁后，运行 `29548664044` 已正常进入 `Luto` 即时结算。
+  - 结算验证码连续出现 `Please drag the segment on the right to complete the line`；GLM 能识别右侧可拖动线段的起点，但多次把终点放到已有线段上，验证码持续刷新。
+  - 运行在应用自己的 900 秒边界正常退出，`run-status.json`、日志和超时截图均成功上传。
+- 根因判断：
+  - GLM 兼容层的通用空间提示只强调坐标网格和视觉路径，没有说明这类题需要按编号把第 N 段放进 N-1 与 N+1 之间的空缺。
+  - 当前 Secret 使用 `glm-4.6v`，但兼容层只给 `glm-4.5*` 请求开启 thinking，导致 4.6V 没有使用可用的深度推理模式。
+- 改动文件：
+  - `app/extensions/llm_adapter.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 拖拽 schema 新增线段编号补全规则，明确目标是相邻编号之间的空缺中心，并要求同时匹配两端与方向。
+  - GLM thinking 支持范围扩展到 `glm-4.6*`，保留原有 `glm-4.5*` 行为。
+  - 按仓库约束未执行测试；使用 Ruff、Black、语法检查与真实 GitHub Actions 继续验证。

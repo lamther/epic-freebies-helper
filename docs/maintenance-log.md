@@ -898,3 +898,16 @@
   - 编号线段题现在在截图后直接执行确定性拖拽，不再等待 GLM；fallback 提示同步改为真实成功样本验证过的编号圆中点规则。
   - 六组 Run 6 题图做留一组验证均正确；另对五张 Run 5 未参与模板选择的题图恢复出完整编号序列。真实成功样本计算终点 `(540, 382)`，实际成功释放点为 `(548, 380)`。
   - 按仓库约束未执行测试；继续使用真实题图离线验证、静态检查和下一轮 GitHub Actions 做最终验收。
+
+### 2026-07-17 本地编号线段求解通过真实领取验收
+
+- 验证运行：
+  - GitHub Actions 运行 `29563199230` 在提交 `e7daafe` 上完成，结论为 `success`，总耗时约 9 分 34 秒。
+  - 登录及两次结算共记录八次 `Solved numbered-line drag deterministically`，日志中没有编号线段题的空间模型请求。
+  - 登录阶段记录 `Challenge success`、`Login success` 与 `Epic store session verification success`。
+  - `Luto` 与 `Echo Generation: Midnight Edition` 均在结算后记录页面标记 `IN LIBRARY`，形成逐款入库证据。
+- 处理结果：
+  - 本地 OpenCV 求解器已通过真实登录、结算验证码和两款游戏领取的端到端验收。
+  - 移除仅用于修复分支验证的 `push` 触发；正式工作流恢复为 `workflow_dispatch` 与每周四定时运行。
+  - hCaptcha 依赖仍会在本地拖拽完成后输出空响应 JSON 解析错误，但随后的挑战状态确认成功；该上游日志噪声不影响登录、结算或工作流结论。
+  - 按仓库约束未执行测试；最终验证依据为静态检查、真实题图离线检查和 GitHub Actions 端到端结果。

@@ -9,7 +9,10 @@ from typing import Any
 import cv2
 import numpy as np
 from hcaptcha_challenger.agent.challenger import AgentV, RoboticArm
+from hcaptcha_challenger.models import SpatialPath
 from loguru import logger
+
+from extensions.numbered_line_solver import solve_numbered_line_drag
 
 NUMBERED_LINE_KEYWORDS = ("drag", "segment", "right", "complete", "line")
 _PROMPT_HOMOGLYPHS = str.maketrans({"Ѕ": "S", "ѕ": "s", "Ο": "O", "ο": "o", "О": "O", "о": "o"})
@@ -22,16 +25,12 @@ path tracing, semantic matching, color matching, and nearest-object heuristics.
 
 1. Read the number N printed inside the black circle on the isolated draggable segment in the
    right-hand panel.
-2. On the left canvas, locate the fixed segments numbered N-1 and N+1.
-3. The black numbered circles only identify the segments. Never use or average their centers to
-   calculate the destination. Trace each colored strip all the way to both visible outer tips.
-4. Inspect the four tips of N-1 and N+1. The missing destination is the midpoint of the closest,
-   directionally aligned tip pair whose separation fits the length and orientation of segment N.
-5. Drag from the center of segment N to the center of that empty gap. The destination must be on
-   the left canvas, adjacent to both neighboring segments, and must not be on any existing colored
-   segment or on a numbered circle.
-6. Return exactly one drag path. Before returning it, verify that inserting N at that destination
-   produces the consecutive order N-1, N, N+1 and visually joins both ends of the line.
+2. On the left canvas, locate the centers of the numbered circles N-1 and N+1.
+3. Drag from the center of circle N to the exact midpoint between circles N-1 and N+1. Ignore the
+   colored strip tips; successful challenge evidence shows the numbered-circle midpoint is the
+   scoring target.
+4. Return exactly one drag path and verify that the destination lies between both neighboring
+   numbered circles.
 """.strip()
 
 _PROMPT_SELECTORS = (
@@ -45,6 +44,7 @@ _original_match_user_prompt = RoboticArm._match_user_prompt
 _original_review_challenge_type = AgentV._review_challenge_type
 _original_capture_spatial_mapping = RoboticArm._capture_spatial_mapping
 _original_perform_drag_drop = RoboticArm._perform_drag_drop
+_original_challenge_image_drag_drop = RoboticArm.challenge_image_drag_drop
 
 
 def _normalize_prompt(value: Any) -> str:
@@ -167,6 +167,7 @@ async def _capture_spatial_mapping_with_source_anchor(
         robotic_arm, frame_challenge, cache_key, crumb_id
     )
     robotic_arm._epic_numbered_source_anchor = None
+    robotic_arm._epic_numbered_drag_path = None
 
     if not _is_numbered_line_prompt(_current_prompt(robotic_arm)):
         return raw, projection
@@ -175,6 +176,21 @@ async def _capture_spatial_mapping_with_source_anchor(
         challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
         challenge_bbox = await challenge_view.bounding_box()
         if challenge_bbox:
+            solution = solve_numbered_line_drag(raw, challenge_bbox)
+            if solution:
+                robotic_arm._epic_numbered_source_anchor = solution.start
+                robotic_arm._epic_numbered_drag_path = (solution.start, solution.end)
+                logger.info(
+                    "Solved numbered-line drag deterministically | layout=1-{} source={} "
+                    "score={:.3f} path={} -> {}",
+                    solution.digit_count,
+                    solution.source_label,
+                    solution.score,
+                    solution.start,
+                    solution.end,
+                )
+                return raw, projection
+
             anchor = _detect_numbered_source_anchor(raw, challenge_bbox)
             robotic_arm._epic_numbered_source_anchor = anchor
             if anchor:
@@ -186,6 +202,24 @@ async def _capture_spatial_mapping_with_source_anchor(
 async def _perform_drag_drop_with_source_anchor(
     robotic_arm: RoboticArm, path: Any, steps: int = 25, delay_ms: int = 15
 ):
+    deterministic_path = getattr(robotic_arm, "_epic_numbered_drag_path", None)
+    if deterministic_path:
+        original_start = (path.start_point.x, path.start_point.y)
+        original_end = (path.end_point.x, path.end_point.y)
+        start, end = deterministic_path
+        path.start_point.x, path.start_point.y = start
+        path.end_point.x, path.end_point.y = end
+        logger.info(
+            "Applied deterministic numbered-line circle midpoint | "
+            "input={} -> {} deterministic={} -> {}",
+            original_start,
+            original_end,
+            start,
+            end,
+        )
+        robotic_arm._epic_numbered_drag_path = None
+        return await _original_perform_drag_drop(robotic_arm, path, steps=steps, delay_ms=delay_ms)
+
     anchor = getattr(robotic_arm, "_epic_numbered_source_anchor", None)
     if anchor:
         original_start = (path.start_point.x, path.start_point.y)
@@ -210,6 +244,41 @@ async def _perform_drag_drop_with_source_anchor(
     return await _original_perform_drag_drop(robotic_arm, path, steps=steps, delay_ms=delay_ms)
 
 
+async def _challenge_image_drag_drop_with_numbered_solver(robotic_arm: RoboticArm, job_type: Any):
+    if not _is_numbered_line_prompt(_current_prompt(robotic_arm)):
+        return await _original_challenge_image_drag_drop(robotic_arm, job_type)
+
+    frame_challenge = await robotic_arm.get_challenge_frame_locator()
+    if frame_challenge is None:
+        return await _original_challenge_image_drag_drop(robotic_arm, job_type)
+
+    crumb_count = await robotic_arm.check_crumb_count()
+    cache_key = robotic_arm.config.create_cache_key(robotic_arm.captcha_payload)
+
+    for crumb_id in range(crumb_count):
+        await robotic_arm.page.wait_for_timeout(
+            robotic_arm.config.WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS
+        )
+        await robotic_arm._capture_spatial_mapping(frame_challenge, cache_key, crumb_id)
+        deterministic_path = getattr(robotic_arm, "_epic_numbered_drag_path", None)
+        if not deterministic_path:
+            logger.warning(
+                "Deterministic numbered-line solver could not establish a confident path; "
+                "falling back to the configured spatial model"
+            )
+            return await _original_challenge_image_drag_drop(robotic_arm, job_type)
+
+        start, end = deterministic_path
+        path = SpatialPath(
+            start_point={"x": start[0], "y": start[1]}, end_point={"x": end[0], "y": end[1]}
+        )
+        await robotic_arm._perform_drag_drop(path)
+
+        with suppress(TimeoutError):
+            submit_btn = frame_challenge.locator("//div[@class='button-submit button']")
+            await robotic_arm.click_by_mouse(submit_btn)
+
+
 def apply_hcaptcha_patch() -> None:
     if getattr(AgentV, "_epic_prompt_patch_applied", False):
         return
@@ -217,6 +286,7 @@ def apply_hcaptcha_patch() -> None:
     RoboticArm._match_user_prompt = _match_user_prompt_with_epic_skills
     RoboticArm._capture_spatial_mapping = _capture_spatial_mapping_with_source_anchor
     RoboticArm._perform_drag_drop = _perform_drag_drop_with_source_anchor
+    RoboticArm.challenge_image_drag_drop = _challenge_image_drag_drop_with_numbered_solver
     AgentV._review_challenge_type = _review_challenge_type_with_dom_prompt
     AgentV._epic_prompt_patch_applied = True
     logger.info("hCaptcha prompt and numbered-line skill patch applied")

@@ -50,14 +50,10 @@ GLM_VISUAL_COORDINATE_INSTRUCTION = (
 GLM_DRAG_SEQUENCE_INSTRUCTION = (
     "Read the visible challenge instruction before choosing a drag target. For 'drag the segment "
     "on the right to complete the line' puzzles, numbered-sequence completion overrides the "
-    "generic path-tracing rule: read N on the isolated right-hand segment, find fixed segments "
-    "N-1 and N+1 on the left canvas, then trace their colored strips to all four visible outer "
-    "tips. Numbered circles identify segments only: never average their centers to calculate the "
-    "destination. Move N to the midpoint of the closest directionally aligned tip pair whose "
-    "separation fits N. The target must be adjacent to both neighboring segments and must not be "
-    "on an existing colored segment or numbered circle. "
-    "Before returning exactly one path, verify that the result forms N-1, N, N+1 and joins both "
-    "ends of the line."
+    "generic path-tracing rule: read N on the isolated right-hand segment, find the numbered "
+    "circles N-1 and N+1 on the left canvas, and drag from the center of circle N to the exact "
+    "midpoint between those two circle centers. Ignore colored strip tips. Before returning exactly "
+    "one path, verify that the destination lies between circles N-1 and N+1."
 )
 
 

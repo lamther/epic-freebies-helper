@@ -51,9 +51,11 @@ GLM_DRAG_SEQUENCE_INSTRUCTION = (
     "Read the visible challenge instruction before choosing a drag target. For 'drag the segment "
     "on the right to complete the line' puzzles, numbered-sequence completion overrides the "
     "generic path-tracing rule: read N on the isolated right-hand segment, find fixed segments "
-    "N-1 and N+1 on the left canvas, then compare their endpoints. Move N into the small empty "
-    "gap between the closest directionally aligned endpoint pair. The target must be adjacent to "
-    "both neighboring segments and must not be on an existing colored segment or numbered circle. "
+    "N-1 and N+1 on the left canvas, then trace their colored strips to all four visible outer "
+    "tips. Numbered circles identify segments only: never average their centers to calculate the "
+    "destination. Move N to the midpoint of the closest directionally aligned tip pair whose "
+    "separation fits N. The target must be adjacent to both neighboring segments and must not be "
+    "on an existing colored segment or numbered circle. "
     "Before returning exactly one path, verify that the result forms N-1, N, N+1 and joins both "
     "ends of the line."
 )
@@ -964,7 +966,14 @@ class _GLMAsyncModels:
         if has_image and "paths" in schema_fields:
             system_messages.append(GLM_DRAG_SEQUENCE_INSTRUCTION)
 
-        if response_schema and hasattr(response_schema, "model_json_schema"):
+        if response_schema and "paths" in schema_fields:
+            system_messages.append(
+                "Return only one JSON object in exactly this shape, with integer coordinates and "
+                "no additional keys: "
+                '{"challenge_prompt":"...","paths":[{"start_point":{"x":0,"y":0},'
+                '"end_point":{"x":0,"y":0}}]}'
+            )
+        elif response_schema and hasattr(response_schema, "model_json_schema"):
             schema_payload = response_schema.model_json_schema()
             system_messages.append(
                 "Return only one JSON object matching this schema exactly. Do not replace nested "

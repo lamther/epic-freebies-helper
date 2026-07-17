@@ -48,11 +48,14 @@ GLM_VISUAL_COORDINATE_INSTRUCTION = (
 )
 
 GLM_DRAG_SEQUENCE_INSTRUCTION = (
-    "Read the visible challenge instruction in the first image before choosing a drag target. "
-    "For 'drag the segment on the right to complete the line' puzzles, the isolated draggable "
-    "segment has a sequence number N. Move its center into the missing gap between the fixed "
-    "segments numbered N-1 and N+1 so both endpoints and the curve orientation connect. The "
-    "target is the center of the empty gap, not the center of an existing numbered segment."
+    "Read the visible challenge instruction before choosing a drag target. For 'drag the segment "
+    "on the right to complete the line' puzzles, numbered-sequence completion overrides the "
+    "generic path-tracing rule: read N on the isolated right-hand segment, find fixed segments "
+    "N-1 and N+1 on the left canvas, then compare their endpoints. Move N into the small empty "
+    "gap between the closest directionally aligned endpoint pair. The target must be adjacent to "
+    "both neighboring segments and must not be on an existing colored segment or numbered circle. "
+    "Before returning exactly one path, verify that the result forms N-1, N, N+1 and joins both "
+    "ends of the line."
 )
 
 

@@ -69,6 +69,7 @@ jobs:
           SPATIAL_PATH_REASONER_MODEL: ${{ secrets.SPATIAL_PATH_REASONER_MODEL }}
           BROWSER_BACKEND: auto
           DISABLE_BEZIER_TRAJECTORY: false
+          ENABLE_CHALLENGER_DEBUG: true
           TASK_TIMEOUT_SECONDS: 1500
           # 在 Actions 中我们依靠 GitHub 的 cron 触发，所以关闭内部调度器
           ENABLE_APSCHEDULER: false
@@ -129,3 +130,16 @@ jobs:
           name: epic-screenshots-${{ github.run_id }}
           path: app/volumes/screenshots/
           retention-days: 7
+
+      - name: Upload hCaptcha diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: epic-hcaptcha-${{ github.run_id }}
+          path: |
+            app/volumes/hcaptcha/.challenge/**/*.png
+            app/volumes/hcaptcha/.challenge/**/*_model_answer.json
+            app/volumes/hcaptcha/.cache/challenge_view/**/*.png
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3

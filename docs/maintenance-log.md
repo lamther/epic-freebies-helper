@@ -812,3 +812,25 @@
   - 关闭依赖内部失败递归；登录和结算层在失败信号后主动刷新挑战，由现有有界循环决定是否重试。
   - 应用任务上限调整为 1500 秒，仍低于 Actions 的 30 分钟上限并预留约 5 分钟上传 artifacts。
   - 按仓库约束未执行测试；使用静态检查和真实 GitHub Actions 继续验证。
+
+### 2026-07-17 GLM 已读取线段题目但仍错误套用通用路径规则
+
+- 现象：
+  - 运行 `29550559218` 的 GLM 输出已包含完整题目 `Please drag the segment on the right to complete the line`，但登录阶段仍连续选错落点。
+  - 失败截图中右侧可拖拽线段编号为 3，正确位置应是左侧 2 与 4 的端点空缺；模型却把终点放在与相邻编号无关的空白区域。
+- 根因判断：
+  - `hcaptcha-challenger` 的 skill 匹配没有这类题目规则，因此即使 payload 中有题目文字，传给空间模型的辅助提示仍只是通用 `JobType`。
+  - 通用空间 system prompt 把路径追踪设为最高优先级，与编号补全题的规则冲突；fallback 识别时还可能只有 challenge router 的空题目。
+  - 关闭依赖内部重试后，第三轮真实运行的登录通过率明显下降；外层现已有 180 秒硬边界，不再需要用关闭重试来防止无界执行。
+- 改动文件：
+  - `app/extensions/hcaptcha_adapter.py`
+  - `app/extensions/llm_adapter.py`
+  - `app/settings.py`
+  - `.github/workflows/epic-gamer.yml`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 新增局部 hCaptcha 兼容补丁：优先从 payload 读取题目，fallback 时从 challenge frame DOM 补取可见题目。
+  - 编号线段题改用专用步骤，明确编号规则覆盖通用路径追踪，并在输出前校验 N-1、N、N+1 与两端连接关系。
+  - 恢复依赖内部失败重试，同时保留登录/结算调用的 180 秒外层硬上限。
+  - Actions 临时上传去敏后的 challenge 图、坐标网格和模型答案，便于真实运行失败后继续定位；不上传 captcha payload 或 Secret。
+  - 按仓库约束未执行测试；使用静态检查、导入检查和真实 GitHub Actions 验证。

@@ -8,6 +8,7 @@ from hcaptcha_challenger.agent import AgentConfig
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import SettingsConfigDict
 
+from extensions.hcaptcha_adapter import apply_hcaptcha_patch
 from extensions.llm_adapter import apply_llm_patch
 
 # --- 核心路径定义 ---
@@ -67,7 +68,7 @@ class EpicSettings(AgentConfig):
     EPIC_EMAIL: str = Field(default_factory=lambda: _env("EPIC_EMAIL"))
     EPIC_PASSWORD: SecretStr = Field(default_factory=lambda: _env("EPIC_PASSWORD"))
     DISABLE_BEZIER_TRAJECTORY: bool = Field(default=False)
-    RETRY_ON_FAILURE: bool = Field(default=False)
+    RETRY_ON_FAILURE: bool = Field(default=True)
     WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS: int = Field(default=3000)
 
     CHALLENGE_CLASSIFIER_MODEL: str = Field(default="")
@@ -185,3 +186,4 @@ class EpicSettings(AgentConfig):
 settings = EpicSettings()
 settings.ignore_request_questions = ["Please drag the crossing to complete the lines"]
 apply_llm_patch(settings)
+apply_hcaptcha_patch()

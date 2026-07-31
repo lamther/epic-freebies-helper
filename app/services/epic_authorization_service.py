@@ -385,6 +385,25 @@ class EpicAuthorization:
         with suppress(Exception):
             await old_page.close()
 
+    async def _submit_login_or_accept_challenge(self) -> None:
+        """Submit the login form unless Epic has already opened hCaptcha."""
+        if await self._has_visible_hcaptcha():
+            logger.warning(
+                "Login hCaptcha appeared before the sign-in button click; entering solve loop"
+            )
+            return
+
+        try:
+            await self.page.locator("#sign-in").click(timeout=10000, no_wait_after=True)
+        except PlaywrightTimeoutError:
+            if await self._has_visible_hcaptcha():
+                logger.warning(
+                    "Login hCaptcha replaced the sign-in button during submission; "
+                    "entering solve loop"
+                )
+                return
+            raise
+
     async def _get_login_status(self, timeout_ms: int = 30000) -> str | None:
         if self._needs_privacy_policy_correction():
             return None
@@ -498,7 +517,7 @@ class EpicAuthorization:
 
             # 4. 点击登录按钮，触发人机挑战值守监听器
             # Active hCaptcha checkbox
-            await self.page.click("#sign-in")
+            await self._submit_login_or_accept_challenge()
 
             login_confirmed = False
             for challenge_attempt in range(1, 4):

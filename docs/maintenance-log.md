@@ -940,3 +940,13 @@
 - 处理结果：
   - 当验证码消失但登录信号尚未出现时，重新填充（仅在页面为空时）并提交密码表单，再进入下一轮有界验证码处理；短轮询优先捕获立即到达的登录结果。
   - Run 20 已证明第一处按钮等待问题修复，但验证码后重新提交尚未进入该运行，需继续用真实 Actions 验证。
+
+### 2026-07-31 登录恢复修复通过两款周免真实领取验收
+
+- 验证运行：
+  - GitHub Actions 运行 `30612847021` 在提交 `33b5a91` 上完成，结论为 `success`。
+  - 登录阶段先记录 hCaptcha 替换登录按钮，首次挑战成功后重新提交密码表单；第二次挑战成功后记录 `Login success`、账号校验成功和 Store session 验证成功。
+  - `OTXO` 与 `Sol Cesto` 均记录页面标记 `IN LIBRARY`；最终记录 `Confirmed 2 instant claim(s)` 与 `Process completed (No cart items pending)`。
+- 处理结果：
+  - “验证码先出现”和“验证码通过后需要重新提交”两个 Epic 登录时序均已覆盖，并通过真实 Actions 登录、结算及两款入库端到端验收。
+  - 按仓库约束未执行测试；Black、Ruff、Python 语法和 diff 静态检查均已通过。

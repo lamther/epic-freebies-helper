@@ -6,6 +6,8 @@ import pytest
 from hcaptcha_challenger.models import (
     ChallengeRouterResult,
     ImageAreaSelectChallenge,
+    ImageBboxChallenge,
+    ImageBinaryChallenge,
     ImageDragDropChallenge,
 )
 
@@ -15,6 +17,7 @@ from extensions.llm_adapter import (
     _coerce_payload_for_schema,
     _extract_json_payload,
     _normalize_glm_payload,
+    _structured_output_contract,
 )
 
 
@@ -38,6 +41,25 @@ def test_schema_then_answer_array_uses_only_the_valid_answer():
 
     parsed = _parse_glm_response(text, ImageAreaSelectChallenge)
     assert [point.model_dump() for point in parsed.points] == answer["points"]
+
+
+def test_schema_echo_with_root_answer_is_accepted():
+    answer = {
+        "challenge_prompt": "Find where you can safely set down the item shown",
+        "points": [{"x": 730, "y": 385}],
+    }
+    text = json.dumps({**ImageAreaSelectChallenge.model_json_schema(), **answer})
+
+    parsed = _parse_glm_response(text, ImageAreaSelectChallenge)
+
+    assert parsed.challenge_prompt == answer["challenge_prompt"]
+    assert [point.model_dump() for point in parsed.points] == answer["points"]
+
+
+def test_schema_only_object_is_rejected_at_adapter_boundary():
+    text = json.dumps(ImageAreaSelectChallenge.model_json_schema())
+
+    assert _parse_glm_response(text, ImageAreaSelectChallenge) is None
 
 
 def test_schema_then_drag_alias_answer_uses_candidate_local_text():
@@ -186,3 +208,55 @@ def test_router_drag_multi_alias_matches_current_schema_enum():
 
     assert challenge.challenge_prompt == ""
     assert challenge.challenge_type.value == "image_drag_multi"
+
+
+@pytest.mark.parametrize(
+    ("schema", "answer", "contract_fragment"),
+    [
+        (
+            ImageAreaSelectChallenge,
+            {"challenge_prompt": "prompt", "points": [{"x": 1, "y": 2}]},
+            '"points":[{"x":0,"y":0}]',
+        ),
+        (
+            ImageDragDropChallenge,
+            {
+                "challenge_prompt": "prompt",
+                "paths": [{"start_point": {"x": 1, "y": 2}, "end_point": {"x": 3, "y": 4}}],
+            },
+            '"paths":[{"start_point":{"x":0,"y":0}',
+        ),
+        (
+            ImageBinaryChallenge,
+            {"challenge_prompt": "prompt", "coordinates": [{"box_2d": [0, 0]}]},
+            '"coordinates":[{"box_2d":[0,0]}]',
+        ),
+        (
+            ImageBboxChallenge,
+            {
+                "challenge_prompt": "prompt",
+                "bounding_boxes": {
+                    "top_left_x": 1,
+                    "top_left_y": 2,
+                    "bottom_right_x": 3,
+                    "bottom_right_y": 4,
+                },
+            },
+            '"bounding_boxes":{"top_left_x":0,"top_left_y":0',
+        ),
+        (
+            ChallengeRouterResult,
+            {"challenge_prompt": "prompt", "challenge_type": "image_drag_multi"},
+            '"image_label_single_select"',
+        ),
+    ],
+)
+def test_compact_output_contracts_are_schema_compatible(schema, answer, contract_fragment):
+    contract = _structured_output_contract(schema)
+    parsed = _parse_glm_response(json.dumps(answer), schema)
+
+    assert contract is not None
+    assert '"$defs"' not in contract
+    assert '"properties"' not in contract
+    assert contract_fragment in contract
+    assert parsed is not None

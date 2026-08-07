@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 KNOWN_CHALLENGE_TYPES = {
     "image_drag_single",
@@ -644,6 +644,52 @@ def _schema_field_names(schema: Any) -> set[str]:
     return set()
 
 
+def _structured_output_contract(schema: Any) -> str | None:
+    """Describe known challenge outputs without encouraging schema echoing."""
+    fields = _schema_field_names(schema)
+
+    if "paths" in fields:
+        return (
+            "Return only one JSON object in exactly this shape, with integer coordinates and "
+            "no additional keys: "
+            '{"challenge_prompt":"...","paths":[{"start_point":{"x":0,"y":0},'
+            '"end_point":{"x":0,"y":0}}]}'
+        )
+
+    if "points" in fields:
+        return (
+            "Return only one JSON object in exactly this shape, with integer coordinates and "
+            "no additional keys: "
+            '{"challenge_prompt":"...","points":[{"x":0,"y":0}]}'
+        )
+
+    if "coordinates" in fields:
+        return (
+            "Return only one JSON object in exactly this shape, with no additional keys: "
+            '{"challenge_prompt":"...","coordinates":[{"box_2d":[0,0]}]}'
+        )
+
+    if "bounding_boxes" in fields:
+        return (
+            "Return only one JSON object in exactly this shape, with integer coordinates and "
+            "no additional keys: "
+            '{"challenge_prompt":"...","bounding_boxes":{"top_left_x":0,"top_left_y":0,'
+            '"bottom_right_x":0,"bottom_right_y":0}}'
+        )
+
+    if "challenge_type" in fields:
+        allowed_types = sorted(_schema_enum_values(schema, "challenge_type"))
+        allowed_type_text = (
+            f" Valid challenge_type values: {json.dumps(allowed_types)}." if allowed_types else ""
+        )
+        return (
+            "Return only one JSON object with a challenge_prompt string and one valid "
+            "challenge_type value. Do not include schema metadata." + allowed_type_text
+        )
+
+    return None
+
+
 def _coerce_payload_for_schema(payload: dict[str, Any], schema: Any, text: str) -> dict[str, Any]:
     fields = _schema_field_names(schema)
     if not fields:
@@ -991,13 +1037,8 @@ class _GLMAsyncModels:
         if has_image and "paths" in schema_fields:
             system_messages.append(GLM_DRAG_SEQUENCE_INSTRUCTION)
 
-        if response_schema and "paths" in schema_fields:
-            system_messages.append(
-                "Return only one JSON object in exactly this shape, with integer coordinates and "
-                "no additional keys: "
-                '{"challenge_prompt":"...","paths":[{"start_point":{"x":0,"y":0},'
-                '"end_point":{"x":0,"y":0}}]}'
-            )
+        if response_schema and (contract := _structured_output_contract(response_schema)):
+            system_messages.append(contract)
         elif response_schema and hasattr(response_schema, "model_json_schema"):
             schema_payload = response_schema.model_json_schema()
             system_messages.append(
@@ -1095,7 +1136,11 @@ class _GLMAsyncModels:
                     return None
 
         if isinstance(schema, type) and issubclass(schema, BaseModel):
-            return schema(**payload)
+            try:
+                return schema(**payload)
+            except ValidationError as err:
+                logger.warning("GLM structured response rejected | reason={!r}", err)
+                return None
 
         return payload
 

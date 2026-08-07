@@ -15,6 +15,7 @@ from loguru import logger
 from extensions.numbered_line_solver import solve_numbered_line_drag
 
 NUMBERED_LINE_KEYWORDS = ("drag", "segment", "right", "complete", "line")
+MISSING_PIPE_PROMPT = "place the missing pipe so the emu can cross"
 _PROMPT_HOMOGLYPHS = str.maketrans({"Ѕ": "S", "ѕ": "s", "Ο": "O", "ο": "o", "О": "O", "о": "o"})
 
 NUMBERED_LINE_SKILL = """
@@ -57,6 +58,10 @@ def _normalize_prompt(value: Any) -> str:
 def _is_numbered_line_prompt(value: Any) -> bool:
     prompt = _normalize_prompt(value).casefold()
     return all(keyword in prompt for keyword in NUMBERED_LINE_KEYWORDS)
+
+
+def _is_missing_pipe_prompt(value: Any) -> bool:
+    return _normalize_prompt(value).casefold() == MISSING_PIPE_PROMPT
 
 
 def _current_prompt(robotic_arm: RoboticArm) -> str:
@@ -143,6 +148,70 @@ def _detect_numbered_source_anchor(
     return anchor
 
 
+def _detect_missing_pipe_source_anchor(
+    challenge_screenshot: Path, challenge_bbox: dict[str, float]
+) -> tuple[int, int] | None:
+    """Find the bright pipe inside the right-hand drag tray.
+
+    The missing-pipe puzzle keeps the draggable part in a dark tray at the right of the
+    challenge. Restricting detection to that tray prevents the connected pipes on the main
+    canvas from becoming a false source. The deepest point in the colored component is a
+    dependable location to press without needing to infer the pipe's shape or destination.
+    """
+    image = cv2.imread(str(challenge_screenshot))
+    if image is None:
+        return None
+
+    height, width = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    lime_mask = cv2.inRange(hsv, np.array((35, 80, 100)), np.array((95, 255, 255)))
+    tray_start = round(width * 0.78)
+    lime_mask[:, :tray_start] = 0
+
+    component_count, labels, stats, _centers = cv2.connectedComponentsWithStats(lime_mask)
+    candidates: list[tuple[float, int, int]] = []
+    for label in range(1, component_count):
+        x, y, component_width, component_height, area = stats[label]
+        if (
+            x < tray_start
+            or y < height * 0.25
+            or component_width < 12
+            or component_height < 12
+            or area < 100
+        ):
+            continue
+
+        component_mask = np.where(labels == label, 255, 0).astype(np.uint8)
+        distance = cv2.distanceTransform(component_mask, cv2.DIST_L2, 5)
+        _min_distance, max_distance, _min_location, _max_location = cv2.minMaxLoc(distance)
+        if max_distance >= 5:
+            candidates.append((max_distance, area, label))
+
+    if not candidates:
+        return None
+
+    _max_distance, _area, source_label = max(candidates)
+    component_mask = np.where(labels == source_label, 255, 0).astype(np.uint8)
+    distance = cv2.distanceTransform(component_mask, cv2.DIST_L2, 5)
+    _min_distance, _max_distance, _min_location, source_local = cv2.minMaxLoc(distance)
+    source_x, source_y = source_local
+
+    scale_x = challenge_bbox["width"] / width
+    scale_y = challenge_bbox["height"] / height
+    anchor = (
+        round(challenge_bbox["x"] + source_x * scale_x),
+        round(challenge_bbox["y"] + source_y * scale_y),
+    )
+
+    debug_image = image.copy()
+    cv2.circle(debug_image, (source_x, source_y), 7, (0, 0, 255), 2)
+    debug_path = challenge_screenshot.with_name(
+        challenge_screenshot.name.replace("_challenge_view.png", "_pipe_source_anchor.png")
+    )
+    cv2.imwrite(str(debug_path), debug_image)
+    return anchor
+
+
 def _match_user_prompt_with_epic_skills(robotic_arm: RoboticArm, job_type: Any) -> str:
     prompt = _current_prompt(robotic_arm)
     if _is_numbered_line_prompt(prompt):
@@ -168,14 +237,16 @@ async def _capture_spatial_mapping_with_source_anchor(
     )
     robotic_arm._epic_numbered_source_anchor = None
     robotic_arm._epic_numbered_drag_path = None
+    robotic_arm._epic_pipe_source_anchor = None
 
-    if not _is_numbered_line_prompt(_current_prompt(robotic_arm)):
+    prompt = _current_prompt(robotic_arm)
+    if not (_is_numbered_line_prompt(prompt) or _is_missing_pipe_prompt(prompt)):
         return raw, projection
 
     with suppress(Exception):
         challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
         challenge_bbox = await challenge_view.bounding_box()
-        if challenge_bbox:
+        if challenge_bbox and _is_numbered_line_prompt(prompt):
             solution = solve_numbered_line_drag(raw, challenge_bbox)
             if solution:
                 robotic_arm._epic_numbered_source_anchor = solution.start
@@ -195,6 +266,11 @@ async def _capture_spatial_mapping_with_source_anchor(
             robotic_arm._epic_numbered_source_anchor = anchor
             if anchor:
                 logger.info("Detected numbered-line draggable anchor | anchor={}", anchor)
+        elif challenge_bbox and _is_missing_pipe_prompt(prompt):
+            anchor = _detect_missing_pipe_source_anchor(raw, challenge_bbox)
+            robotic_arm._epic_pipe_source_anchor = anchor
+            if anchor:
+                logger.info("Detected missing-pipe draggable anchor | anchor={}", anchor)
 
     return raw, projection
 
@@ -240,6 +316,23 @@ async def _perform_drag_drop_with_source_anchor(
                 (path.start_point.x, path.start_point.y),
                 (path.end_point.x, path.end_point.y),
             )
+        return await _original_perform_drag_drop(robotic_arm, path, steps=steps, delay_ms=delay_ms)
+
+    pipe_anchor = getattr(robotic_arm, "_epic_pipe_source_anchor", None)
+    if pipe_anchor:
+        original_start = (path.start_point.x, path.start_point.y)
+        original_end = (path.end_point.x, path.end_point.y)
+        path.start_point.x, path.start_point.y = pipe_anchor
+        logger.info(
+            "Corrected missing-pipe drag source from visible tray | original={} -> {} "
+            "corrected={} -> {}",
+            original_start,
+            original_end,
+            pipe_anchor,
+            original_end,
+        )
+        robotic_arm._epic_pipe_source_anchor = None
+        return await _original_perform_drag_drop(robotic_arm, path, steps=steps, delay_ms=delay_ms)
 
     return await _original_perform_drag_drop(robotic_arm, path, steps=steps, delay_ms=delay_ms)
 

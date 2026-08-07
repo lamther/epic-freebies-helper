@@ -82,7 +82,7 @@ def _guess_mime_type(file: Any) -> str:
     return guessed or "image/png"
 
 
-def _extract_json_payload(text: str) -> dict[str, Any]:
+def _extract_json_payload(text: str) -> Any:
     stripped = text.strip()
     if stripped.startswith("```"):
         match = re.search(r"```(?:json)?\s*([\s\S]*?)```", stripped)
@@ -801,6 +801,35 @@ def _coerce_payload_for_schema(payload: dict[str, Any], schema: Any, text: str) 
     return payload
 
 
+def _coerce_json_response_payload(text: str, schema: Any) -> dict[str, Any]:
+    raw_payload = _extract_json_payload(text)
+    if isinstance(raw_payload, dict):
+        return _coerce_payload_for_schema(_normalize_glm_payload(raw_payload), schema, text)
+
+    if not isinstance(raw_payload, list):
+        raise ValueError("GLM JSON response must be an object or an array of objects")
+
+    accepted_payloads: list[dict[str, Any]] = []
+    for candidate in raw_payload:
+        if not isinstance(candidate, dict):
+            continue
+
+        with suppress(Exception):
+            candidate_text = json.dumps(candidate, ensure_ascii=False)
+            payload = _coerce_payload_for_schema(
+                _normalize_glm_payload(candidate), schema, candidate_text
+            )
+            if isinstance(schema, type) and issubclass(schema, BaseModel):
+                schema(**payload)
+            accepted_payloads.append(payload)
+
+    if len(accepted_payloads) == 1:
+        return accepted_payloads[0]
+    if not accepted_payloads:
+        raise ValueError("GLM JSON response array did not contain a valid answer")
+    raise ValueError("GLM JSON response array contained multiple valid answers")
+
+
 def _normalize_glm_payload(payload: dict[str, Any]) -> dict[str, Any]:
     challenge_prompt = _coerce_challenge_prompt(payload)
     inferred_rule = str(payload.get("inferred_rule") or "")
@@ -1032,9 +1061,23 @@ class _GLMAsyncModels:
             return None
 
         try:
-            payload = _coerce_payload_for_schema(
-                _normalize_glm_payload(_extract_json_payload(text)), schema, text
-            )
+            raw_payload = _extract_json_payload(text)
+        except (TypeError, ValueError):
+            raw_payload = None
+
+        if isinstance(raw_payload, list):
+            try:
+                payload = _coerce_json_response_payload(text, schema)
+            except Exception as err:
+                logger.warning("GLM JSON response array rejected | reason={!r}", err)
+                return None
+
+            if isinstance(schema, type) and issubclass(schema, BaseModel):
+                return schema(**payload)
+            return payload
+
+        try:
+            payload = _coerce_json_response_payload(text, schema)
         except Exception:
             normalized = _normalize_glm_answer_value(text)
             if normalized:

@@ -71,6 +71,38 @@ class EpicAuthorization:
     def _is_two_factor_required_error(error_code: str) -> bool:
         return error_code == "errors.com.epicgames.common.two_factor_authentication.required"
 
+    @staticmethod
+    def _is_cloudflare_security_check_text(value: str) -> bool:
+        normalized = " ".join((value or "").casefold().split())
+        if "cloudflare" not in normalized:
+            return False
+
+        return any(
+            marker in normalized
+            for marker in (
+                "one more step",
+                "please complete a security check",
+                "verify you are human",
+                "verify that you are human",
+            )
+        )
+
+    async def _has_cloudflare_security_check(self) -> bool:
+        with suppress(Exception):
+            if self._is_cloudflare_security_check_text(await self.page.title()):
+                return True
+
+        return self._is_cloudflare_security_check_text(await self._page_body_text())
+
+    @staticmethod
+    def _cloudflare_security_check_message(current_url: str) -> str:
+        return (
+            "Epic is requiring a Cloudflare human-verification page on this runner. "
+            "The workflow will not attempt to bypass that security check. "
+            "Claim the games in a normal browser or use a supported human-operated environment; "
+            f"current_url={current_url}"
+        )
+
     async def _handle_right_account_validation(self):
         """
         以下验证仅会在登录成功后出现
@@ -243,6 +275,9 @@ class EpicAuthorization:
         )
 
     async def _has_visible_hcaptcha(self) -> bool:
+        if await self._has_cloudflare_security_check():
+            return False
+
         for frame in self.page.frames:
             if "hcaptcha" in (frame.url or "").lower():
                 with suppress(Exception):
@@ -282,6 +317,11 @@ class EpicAuthorization:
             with suppress(Exception):
                 await expect(email_input).to_be_visible(timeout=1000)
                 return
+
+            if await self._has_cloudflare_security_check():
+                raise EpicManualActionRequiredError(
+                    self._cloudflare_security_check_message(self.page.url)
+                )
 
             if await self._has_pre_login_security_check():
                 if recovery_attempts < 2:
@@ -338,6 +378,11 @@ class EpicAuthorization:
         deadline = time.monotonic() + timeout_seconds
 
         while time.monotonic() < deadline:
+            if await self._has_cloudflare_security_check():
+                raise EpicManualActionRequiredError(
+                    self._cloudflare_security_check_message(self.page.url)
+                )
+
             if not self._login_error_signal.empty():
                 result = await self._login_error_signal.get()
                 error_code = result.get("errorCode", "unknown_error")
@@ -621,6 +666,11 @@ class EpicAuthorization:
 
         for attempt in range(1, 4):
             await self._goto_claim_page()
+
+            if await self._has_cloudflare_security_check():
+                raise EpicManualActionRequiredError(
+                    self._cloudflare_security_check_message(self.page.url)
+                )
 
             if self._needs_privacy_policy_correction():
                 logger.error(

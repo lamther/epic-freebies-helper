@@ -1,4 +1,7 @@
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from hcaptcha_challenger.models import (
     ChallengeRouterResult,
@@ -7,10 +10,77 @@ from hcaptcha_challenger.models import (
 )
 
 from extensions.llm_adapter import (
+    _GLMAsyncModels,
+    _coerce_json_response_payload,
     _coerce_payload_for_schema,
     _extract_json_payload,
     _normalize_glm_payload,
 )
+
+
+def _parse_glm_response(text, schema):
+    client = _GLMAsyncModels(settings=None, storage={})
+    return client._parse_response(text, SimpleNamespace(response_schema=schema))
+
+
+def test_schema_then_answer_array_uses_only_the_valid_answer():
+    answer = {
+        "challenge_prompt": "Find where you can safely set down the item shown",
+        "points": [{"x": 747, "y": 396}],
+    }
+    text = json.dumps([ImageAreaSelectChallenge.model_json_schema(), answer])
+
+    payload = _coerce_json_response_payload(text, ImageAreaSelectChallenge)
+    challenge = ImageAreaSelectChallenge(**payload)
+
+    assert challenge.challenge_prompt == answer["challenge_prompt"]
+    assert [point.model_dump() for point in challenge.points] == answer["points"]
+
+    parsed = _parse_glm_response(text, ImageAreaSelectChallenge)
+    assert [point.model_dump() for point in parsed.points] == answer["points"]
+
+
+def test_schema_then_drag_alias_answer_uses_candidate_local_text():
+    answer = {
+        "source_coordinates": {"x": 847, "y": 335},
+        "target_coordinates": {"x": 586, "y": 495},
+    }
+    text = json.dumps([ImageDragDropChallenge.model_json_schema(), answer])
+
+    parsed = _parse_glm_response(text, ImageDragDropChallenge)
+
+    assert parsed.paths[0].start_point.model_dump() == answer["source_coordinates"]
+    assert parsed.paths[0].end_point.model_dump() == answer["target_coordinates"]
+
+
+def test_schema_only_array_is_not_accepted_as_an_answer():
+    text = json.dumps([ImageAreaSelectChallenge.model_json_schema()])
+
+    with pytest.raises(ValueError, match="did not contain a valid answer"):
+        _coerce_json_response_payload(text, ImageAreaSelectChallenge)
+
+
+def test_multiple_valid_array_answers_are_rejected_as_ambiguous():
+    answer = {"challenge_prompt": "", "points": [{"x": 747, "y": 396}]}
+
+    with pytest.raises(ValueError, match="multiple valid answers"):
+        _coerce_json_response_payload(json.dumps([answer, answer]), ImageAreaSelectChallenge)
+
+
+def test_multiple_valid_drag_answers_do_not_fall_back_to_the_first_answer():
+    first_answer = {
+        "challenge_prompt": "Place the missing pipe so the emu can cross",
+        "paths": [{"start_point": {"x": 819, "y": 322}, "end_point": {"x": 711, "y": 322}}],
+    }
+    second_answer = {
+        "challenge_prompt": "Place the missing pipe so the emu can cross",
+        "paths": [{"start_point": {"x": 847, "y": 335}, "end_point": {"x": 586, "y": 495}}],
+    }
+
+    assert (
+        _parse_glm_response(json.dumps([first_answer, second_answer]), ImageDragDropChallenge)
+        is None
+    )
 
 
 def test_area_select_box_answer_is_converted_to_click_points():

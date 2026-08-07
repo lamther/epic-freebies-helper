@@ -65,12 +65,16 @@ def _is_missing_pipe_prompt(value: Any) -> bool:
 
 
 def _current_prompt(robotic_arm: RoboticArm) -> str:
+    visible_prompt = _normalize_prompt(robotic_arm._challenge_prompt)
+    if visible_prompt and visible_prompt.lower() != "unknown":
+        return visible_prompt
+
     if robotic_arm.captcha_payload:
         with suppress(Exception):
             prompt = _normalize_prompt(robotic_arm.captcha_payload.get_requester_question())
             if prompt and prompt.lower() != "unknown":
                 return prompt
-    return _normalize_prompt(robotic_arm._challenge_prompt)
+    return ""
 
 
 async def _read_visible_prompt(robotic_arm: RoboticArm) -> str:
@@ -239,14 +243,23 @@ async def _capture_spatial_mapping_with_source_anchor(
     robotic_arm._epic_numbered_drag_path = None
     robotic_arm._epic_pipe_source_anchor = None
 
-    prompt = _current_prompt(robotic_arm)
-    if not (_is_numbered_line_prompt(prompt) or _is_missing_pipe_prompt(prompt)):
+    # A payload can belong to the preceding retry. Refresh from the visible frame after the
+    # screenshot so a stale pipe prompt cannot alter an unrelated replacement challenge.
+    visible_prompt = await _read_visible_prompt(robotic_arm)
+    if visible_prompt:
+        robotic_arm._challenge_prompt = visible_prompt
+
+    prompt = visible_prompt or _current_prompt(robotic_arm)
+    is_numbered_line = _is_numbered_line_prompt(prompt)
+    # Pipe anchoring is destructive if the prompt is stale, so require a current DOM read.
+    is_missing_pipe = bool(visible_prompt) and _is_missing_pipe_prompt(visible_prompt)
+    if not (is_numbered_line or is_missing_pipe):
         return raw, projection
 
     with suppress(Exception):
         challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
         challenge_bbox = await challenge_view.bounding_box()
-        if challenge_bbox and _is_numbered_line_prompt(prompt):
+        if challenge_bbox and is_numbered_line:
             solution = solve_numbered_line_drag(raw, challenge_bbox)
             if solution:
                 robotic_arm._epic_numbered_source_anchor = solution.start
@@ -266,7 +279,7 @@ async def _capture_spatial_mapping_with_source_anchor(
             robotic_arm._epic_numbered_source_anchor = anchor
             if anchor:
                 logger.info("Detected numbered-line draggable anchor | anchor={}", anchor)
-        elif challenge_bbox and _is_missing_pipe_prompt(prompt):
+        elif challenge_bbox and is_missing_pipe:
             anchor = _detect_missing_pipe_source_anchor(raw, challenge_bbox)
             robotic_arm._epic_pipe_source_anchor = anchor
             if anchor:

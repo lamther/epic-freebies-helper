@@ -6,6 +6,8 @@ import numpy as np
 
 import extensions.hcaptcha_adapter as hcaptcha_adapter
 from extensions.hcaptcha_adapter import (
+    _capture_spatial_mapping_with_source_anchor,
+    _current_prompt,
     _detect_missing_pipe_source_anchor,
     _is_missing_pipe_prompt,
 )
@@ -16,6 +18,17 @@ def test_missing_pipe_prompt_is_narrowly_recognized():
     assert not _is_missing_pipe_prompt("Please drag the segment on the right to complete the line")
     assert not _is_missing_pipe_prompt("Find where you can safely set down the item shown")
     assert not _is_missing_pipe_prompt("Cross-check the missing pipeline for emulsion")
+
+
+def test_visible_prompt_has_priority_over_stale_payload_prompt():
+    robotic_arm = SimpleNamespace(
+        _challenge_prompt="Find where you can safely set down the item shown",
+        captcha_payload=SimpleNamespace(
+            get_requester_question=lambda: "Place the missing pipe so the emu can cross"
+        ),
+    )
+
+    assert _current_prompt(robotic_arm) == "Find where you can safely set down the item shown"
 
 
 def test_missing_pipe_anchor_uses_right_hand_tray_and_projects_to_page(tmp_path):
@@ -87,3 +100,40 @@ def test_numbered_line_anchor_has_priority_over_pipe_anchor(monkeypatch):
 
     assert result == "dragged"
     assert captured == {"start": (430, 250), "end": (530, 300)}
+
+
+def test_stale_pipe_payload_does_not_anchor_a_replacement_challenge(monkeypatch, tmp_path):
+    screenshot = tmp_path / "replacement_challenge_view.png"
+    screenshot.write_bytes(b"not-read-by-this-test")
+    projection = tmp_path / "replacement_spatial_helper.png"
+    detector_called = False
+
+    async def capture(_robotic_arm, _frame, _cache_key, _crumb_id):
+        return screenshot, projection
+
+    async def visible_prompt(_robotic_arm):
+        return "Find where you can safely set down the item shown"
+
+    def detect_pipe(*_args):
+        nonlocal detector_called
+        detector_called = True
+        return (800, 300)
+
+    monkeypatch.setattr(hcaptcha_adapter, "_original_capture_spatial_mapping", capture)
+    monkeypatch.setattr(hcaptcha_adapter, "_read_visible_prompt", visible_prompt)
+    monkeypatch.setattr(hcaptcha_adapter, "_detect_missing_pipe_source_anchor", detect_pipe)
+    robotic_arm = SimpleNamespace(
+        _challenge_prompt="Place the missing pipe so the emu can cross",
+        captcha_payload=SimpleNamespace(
+            get_requester_question=lambda: "Place the missing pipe so the emu can cross"
+        ),
+    )
+
+    raw, actual_projection = asyncio.run(
+        _capture_spatial_mapping_with_source_anchor(robotic_arm, object(), tmp_path, 0)
+    )
+
+    assert (raw, actual_projection) == (screenshot, projection)
+    assert robotic_arm._challenge_prompt == "Find where you can safely set down the item shown"
+    assert robotic_arm._epic_pipe_source_anchor is None
+    assert not detector_called

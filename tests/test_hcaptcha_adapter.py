@@ -6,9 +6,11 @@ import numpy as np
 
 import extensions.hcaptcha_adapter as hcaptcha_adapter
 from extensions.hcaptcha_adapter import (
+    ANIMAL_COUNT_SKILL,
     _capture_spatial_mapping_with_source_anchor,
     _current_prompt,
     _detect_missing_pipe_source_anchor,
+    _is_animal_count_prompt,
     _is_missing_pipe_prompt,
 )
 
@@ -18,6 +20,13 @@ def test_missing_pipe_prompt_is_narrowly_recognized():
     assert not _is_missing_pipe_prompt("Please drag the segment on the right to complete the line")
     assert not _is_missing_pipe_prompt("Find where you can safely set down the item shown")
     assert not _is_missing_pipe_prompt("Cross-check the missing pipeline for emulsion")
+
+
+def test_animal_count_prompt_is_narrowly_recognized_and_excludes_reference_panel():
+    assert _is_animal_count_prompt("Find all animals the given number of times")
+    assert not _is_animal_count_prompt("Find all animals in the image")
+    assert "right-hand column is a reference list" in ANIMAL_COUNT_SKILL
+    assert "Never click" in ANIMAL_COUNT_SKILL
 
 
 def test_visible_prompt_has_priority_over_stale_payload_prompt():

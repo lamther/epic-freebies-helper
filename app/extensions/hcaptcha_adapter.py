@@ -16,6 +16,7 @@ from extensions.numbered_line_solver import solve_numbered_line_drag
 
 NUMBERED_LINE_KEYWORDS = ("drag", "segment", "right", "complete", "line")
 MISSING_PIPE_PROMPT = "place the missing pipe so the emu can cross"
+ANIMAL_COUNT_PROMPT = "find all animals the given number of times"
 _PROMPT_HOMOGLYPHS = str.maketrans({"Ѕ": "S", "ѕ": "s", "Ο": "O", "ο": "o", "О": "O", "о": "o"})
 
 NUMBERED_LINE_SKILL = """
@@ -32,6 +33,19 @@ path tracing, semantic matching, color matching, and nearest-object heuristics.
    scoring target.
 4. Return exactly one drag path and verify that the destination lies between both neighboring
    numbered circles.
+""".strip()
+
+ANIMAL_COUNT_SKILL = """
+This is an image-label multi-select task. The right-hand column is a reference list, not
+an answer area. Never click its example animals or the black count badges.
+
+1. Read each reference animal and its N× badge in the right-hand column.
+2. Search only the left-hand tile grid for the same animal. Select exactly N matching grid
+   tiles for each reference item.
+3. Return only the centers of matching tiles in the left grid. Do not return a point in the
+   right-hand reference column, header, margins, or whitespace.
+4. Before responding, verify that every point is inside a tile and that the number of points
+   matches the sum of all N× badges.
 """.strip()
 
 _PROMPT_SELECTORS = (
@@ -62,6 +76,10 @@ def _is_numbered_line_prompt(value: Any) -> bool:
 
 def _is_missing_pipe_prompt(value: Any) -> bool:
     return _normalize_prompt(value).casefold() == MISSING_PIPE_PROMPT
+
+
+def _is_animal_count_prompt(value: Any) -> bool:
+    return _normalize_prompt(value).casefold() == ANIMAL_COUNT_PROMPT
 
 
 def _current_prompt(robotic_arm: RoboticArm) -> str:
@@ -218,6 +236,9 @@ def _detect_missing_pipe_source_anchor(
 
 def _match_user_prompt_with_epic_skills(robotic_arm: RoboticArm, job_type: Any) -> str:
     prompt = _current_prompt(robotic_arm)
+    if _is_animal_count_prompt(prompt):
+        logger.info("Using animal-count hCaptcha skill | prompt={!r}", prompt)
+        return ANIMAL_COUNT_SKILL
     if _is_numbered_line_prompt(prompt):
         logger.info("Using numbered-line hCaptcha skill | prompt={!r}", prompt)
         return NUMBERED_LINE_SKILL

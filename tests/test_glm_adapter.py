@@ -16,6 +16,7 @@ from extensions.llm_adapter import (
     _coerce_json_response_payload,
     _coerce_payload_for_schema,
     _extract_json_payload,
+    _glm_thinking_payload,
     _normalize_glm_payload,
     _structured_output_contract,
 )
@@ -24,6 +25,24 @@ from extensions.llm_adapter import (
 def _parse_glm_response(text, schema):
     client = _GLMAsyncModels(settings=None, storage={})
     return client._parse_response(text, SimpleNamespace(response_schema=schema))
+
+
+def test_glm_point_selection_disables_thinking_to_fit_hcaptcha_round_budget():
+    payload = _glm_thinking_payload(
+        "glm-4.6v",
+        SimpleNamespace(thinking_config=object(), response_schema=ImageAreaSelectChallenge),
+    )
+
+    assert payload == {"type": "disabled"}
+
+
+def test_glm_drag_selection_keeps_thinking_enabled():
+    payload = _glm_thinking_payload(
+        "glm-4.6v",
+        SimpleNamespace(thinking_config=object(), response_schema=ImageDragDropChallenge),
+    )
+
+    assert payload == {"type": "enabled"}
 
 
 def test_schema_then_answer_array_uses_only_the_valid_answer():

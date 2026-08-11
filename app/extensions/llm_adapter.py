@@ -57,6 +57,22 @@ GLM_DRAG_SEQUENCE_INSTRUCTION = (
 )
 
 
+def _glm_thinking_payload(model: str, config: Any) -> dict[str, str] | None:
+    """Select GLM thinking mode without exhausting hCaptcha point-selection budgets."""
+    if not model.lower().startswith(("glm-4.5", "glm-4.6")):
+        return None
+    if getattr(config, "thinking_config", None) is None:
+        return None
+
+    schema = getattr(config, "response_schema", None)
+    schema_fields = getattr(schema, "model_fields", {})
+    if "points" in schema_fields:
+        # Point-selection challenges commonly contain two short rounds. Reasoning traces add
+        # latency without improving the structured coordinate contract, so keep this mode fast.
+        return {"type": "disabled"}
+    return {"type": "enabled"}
+
+
 def _ensure_list(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -1067,11 +1083,8 @@ class _GLMAsyncModels:
         if getattr(config, "response_schema", None) is not None:
             payload["response_format"] = {"type": "json_object"}
 
-        thinking_models = ("glm-4.5", "glm-4.6")
-        if getattr(config, "thinking_config", None) is not None and model.lower().startswith(
-            thinking_models
-        ):
-            payload["thinking"] = {"type": "enabled"}
+        if thinking_payload := _glm_thinking_payload(model, config):
+            payload["thinking"] = thinking_payload
 
         payload.update({k: v for k, v in kwargs.items() if k not in {"config"}})
         return payload
